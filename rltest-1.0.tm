@@ -54,7 +54,10 @@ namespace eval ::rltest {
 			-body			{-default {}}
 			-cleanup		{-default {}}
 			-match			{-default exact}
-			-returnCodes	{ok return}
+			-result			{}
+			-errorCode		{}
+			-errorInfo		{}
+			-returnCodes	{-default {ok return}}
 		} _
 		array set opts $_
 
@@ -146,14 +149,14 @@ namespace eval ::rltest {
 	}
 
 	#>>>
-	proc rl_runAllTests args { #<<<
+	proc runAllTests args { #<<<
 		global _rl_test_stats _rl_test_config
 
 		parse_args::parse_args $args {
 			-match		{-default *}
 			-verbose	{-default 0}
 		} _
-		array set _rl_test_config $args
+		array set _rl_test_config $_
 
 		array set _rl_test_stats {
 			skipped			0
