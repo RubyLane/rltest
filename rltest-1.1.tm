@@ -276,6 +276,7 @@ namespace eval ::rltest {
 			uplevel 1 $script
 		} finally {
 			oo::define $fqclass mixin -set {*}$old
+			$mixin destroy
 		}
 	}
 
