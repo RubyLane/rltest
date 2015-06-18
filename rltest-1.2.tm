@@ -499,7 +499,7 @@ namespace eval ::rltest {
 			}
 
 			foreach {xpath e f expecting} $asserts {
-				set got	[lmap e [uplevel 1 [list $root selectNodes $xpath]] $f]
+				set got	[lmap $e [uplevel 1 [list $root selectNodes $xpath]] $f]
 				switch -- $match {
 					exact  { set matches	[expr {$got eq $expecting}] }
 					glob   { set matches	[string match {*}$matchargs $expecting $got] }
