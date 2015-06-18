@@ -49,8 +49,8 @@ not exist at all will implicitly match a negative check.
 * `+` - nonblank  
 The matched value must be nonblank.  
 * `!+` - blank  
-The matched value must be blank.  An element/attribute must exist and be
-blank for this check to pass.
+The matched value must be blank if it exists.  To check that something exists
+and is blank, use multiple checks.
 * `&....` - subst value  
 The expectation value is expanded with `subst`, with the result checked
 for a match as an ordinary glob.  This is useful when you need to pull
