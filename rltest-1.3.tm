@@ -77,6 +77,7 @@ namespace eval ::rltest {
 			return
 		}
 		incr _rl_test_stats(run)
+		set _rl_test_stats(name)	$name
 
 		_run_if_set $opts(setup)
 		if {[info exists errorInfo]} {set errorInfo	""}
@@ -196,10 +197,19 @@ namespace eval ::rltest {
 		if {$_rl_test_stats(failing_tests) ne ""} {
 			append output "Failing tests:\n\t[join $_rl_test_stats(failing_tests) \n\t]\n"
 		}
+		unset -nocomplain _rl_test_status(name)
 		set output
 	}
 
 	#>>>
+	proc debug msg { #<<<
+		global _rl_test_stats
+		if {![info exists _rl_test_stats(name)]} return
+		append _rl_test_stats(results) [format "%s: %s\n" $_rl_test_stats(name) $msg]
+	}
+
+	#>>>
+
 
 	variable stubseq	0
 
@@ -429,8 +439,8 @@ namespace eval ::rltest {
 			}
 
 			string    { if {[json get $j1] ne [json get $j2]} {apply $mismatch "Strings differ: left: \"[json get $j1]\" vs. right: \"[json get $j2]\""} }
-			number    { if {[json get $j1] == [json get $j2]} {apply $mismatch "Numbers differ: left: [json extract $j1] vs. right: [json extract $j2]"} }
-			boolean   { if {[json get $j1] == [json get $j2]} {apply $mismatch "Booleans differ: left: [json extract $j1] vs. right: [json extract $j2]"} }
+			number    { if {[json get $j1] != [json get $j2]} {apply $mismatch "Numbers differ: left: [json extract $j1] vs. right: [json extract $j2]"} }
+			boolean   { if {[json get $j1]?1:0 != [json get $j2]?1:0} {apply $mismatch "Booleans differ: left: [json extract $j1] vs. right: [json extract $j2]"} }
 			null      { }
 
 			default {
@@ -470,10 +480,14 @@ namespace eval ::rltest {
 			-textmatch	{}
 			-html		{-required}
 			-asserts	{-default {}}
+			-checks		{-default {}}
 		}
 
 		if {[llength $asserts] % 4 != 0} {
 			error "asserts should be a list of {xpath e f expecting}"
+		}
+		if {[llength $checks] % 2 != 0} {
+			error "checks should be a list of {xpath expecting}"
 		}
 
 		try {
@@ -512,6 +526,91 @@ namespace eval ::rltest {
 
 				if {!$matches} {
 					return "$xpath failed, expecting: \"$expecting\", got: \"$got\""
+				}
+			}
+
+			foreach {xpath expecting} $checks {
+				# a negative test is ok if not found at all
+				set ok [string match !* $expecting]
+				upvar 1 __vtype vtype
+				foreach match [uplevel 1 [list $root selectNodes $xpath __vtype]] {
+					set ok 1
+
+					set value [switch -- $vtype {
+						attrnodes {
+							# check againt attr value
+							lindex $match 1
+						}
+						nodes {
+							# check against text content
+							$match asText
+						}
+						default {
+							# anything else, check exact string.
+							set match
+						}
+					}]
+
+					# magic expectations
+					switch -glob -- $expecting {
+						! {
+							# don't match
+							return "$xpath failed negative existence match, found \"$value\""
+						}
+						!(*) {
+							# negative word match
+							set words [split [string range $expecting 2 end-1]]
+							foreach w $words {
+								if {[regexp "\\m$w\\M" $value]} {
+									return "$xpath failed negative word match, found: \"$w\", got \"$value\""
+								}
+							}
+						}
+						!+ {
+							# blank
+							if {$value ne ""} {
+								return "$xpath failed blank match, got: \"$value\""
+							}
+						}
+						!* {
+							# negative match
+							set negexpect [string range $expecting 1 end]
+							if {[string match $negexpect $value]} {
+								return "$xpath failed negative match, found: \"$expecting\", got: \"$value\""
+							}
+						}
+						(*) {
+							# word match
+							set words [split [string range $expecting 1 end-1]]
+							foreach w $words {
+								if {![regexp "\\m$w\\M" $value]} {
+									return "$xpath failed word match, expecting: \"$w\", got \"$value\""
+								}
+							}
+						}
+						+ {
+							# non-blank
+							if {$value eq ""} {
+								return "$xpath failed non-blank match"
+							}
+						}
+						&* {
+							# subst, then normal (glob) match
+							set ex [uplevel 1 [list subst [string range $expecting 1 end]]]
+							if {![string match $ex $value]} {
+								return "$xpath failed, expecting: \"$expecting\", got: \"$value\" subst: \"$ex\""
+							}
+						}
+						default {
+							# normal glob match
+							if {![string match $expecting $value]} {
+								return "$xpath failed, expecting: \"$expecting\", got: \"$value\""
+							}
+						}
+					}
+				}
+				if {!$ok} {
+					return "$xpath not found"
 				}
 			}
 
