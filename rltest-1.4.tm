@@ -18,6 +18,7 @@ namespace eval ::rltest {
 			exact   { expr {$a eq $b} }
 			glob    { string match $a $b }
 			regexp  { regexp $a $b }
+			html    { expr {[rltest html_assert -html $b {*}$a] eq "passes"} }
 			default { error "Invalid match type \"$mode\", should be one of exact, glob, regexp" }
 		}
 	}
@@ -46,8 +47,33 @@ namespace eval ::rltest {
 	}
 
 	#>>>
+	proc data args { #<<<
+		global _rl_test_data
+
+		parse_args $args {
+			key		{-required}
+			val		{}
+		}
+
+		if {[info exists val]} {
+			dict set _rl_test_data $key $val
+		} else {
+			dict get $_rl_test_data $key
+		}
+	}
+
+	#>>>
+	proc name {} { # Return the name of the current test <<<
+		global _rl_test_current_name
+		if {![info exists _rl_test_current_name]} {
+			return ""
+		}
+		set _rl_test_current_name
+	}
+
+	#>>>
 	proc test {name desc args} { #<<<
-		global _rl_test_config _rl_test_stats errorInfo errorCode
+		global _rl_test_config _rl_test_stats errorInfo errorCode _rl_test_data _rl_test_current_name
 
 		parse_args::parse_args $args {
 			-setup			{-default {}}
@@ -58,8 +84,14 @@ namespace eval ::rltest {
 			-errorCode		{}
 			-errorInfo		{}
 			-returnCodes	{-default {ok return}}
+			-constraints	{-default {}}
+			-maxtime		{-default 0.5 -# {Consider the test a failure if it takes longer than this (seconds)}}
 		} _
 		array set opts $_
+
+		set _rl_test_current_name	$name
+
+		set _rl_test_data	{}
 
 		set normalized_codes [lmap e $opts(returnCodes) {
 			switch -- $e {
@@ -76,13 +108,23 @@ namespace eval ::rltest {
 			incr _rl_test_stats(skipped)
 			return
 		}
+		foreach constraint $opts(constraints) {
+			if {$constraint ni $_rl_test_config(constraints)} {
+				incr _rl_test_stats(skipped)
+				incr _rl_test_stats(skipped_by_constraint,$constraint)
+				return
+			}
+		}
+
 		incr _rl_test_stats(run)
 		set _rl_test_stats(name)	$name
 
 		_run_if_set $opts(setup)
 		if {[info exists errorInfo]} {set errorInfo	""}
 		if {[info exists errorCode]} {set errorCode	""}
+		set before	[clock microseconds]
 		set code [catch {uplevel 1 $opts(body)} res]
+		set elapsed	[expr {([clock microseconds] - $before) / 1e6}]
 		if {[info exists errorInfo]} {set errorinfo $errorInfo} else {set errorinfo ""}
 		if {[info exists errorCode]} {set errorcode $errorCode} else {set errorcode ""}
 		_run_if_set $opts(cleanup)
@@ -136,6 +178,11 @@ namespace eval ::rltest {
 			}
 		}
 
+		if {$passes && $elapsed > $opts(maxtime)} {
+			set passes	0
+			append messages "---- Test took [format %.6f $elapsed] s, greater than -maxtime [format %.6f $opts(maxtime)] s\n"
+		}
+
 		if {$passes} {
 			incr _rl_test_stats(passed)
 			append _rl_test_stats(messages) "PASSED: $name ($desc)\n"
@@ -147,6 +194,7 @@ namespace eval ::rltest {
 			append _rl_test_stats(results) $messages
 			append _rl_test_stats(results) "==== $name FAILED\n\n"
 		}
+		unset -nocomplain _rl_test_current_name
 	}
 
 	#>>>
@@ -154,8 +202,9 @@ namespace eval ::rltest {
 		global _rl_test_stats _rl_test_config
 
 		parse_args::parse_args $args {
-			-match		{-default *}
-			-verbose	{-default 0}
+			-match			{-default *}
+			-verbose		{-default 0}
+			-constraints	{-default {}}
 		} _
 		array set _rl_test_config $_
 
@@ -194,6 +243,13 @@ namespace eval ::rltest {
 		append output "\tPassed\t$_rl_test_stats(passed)"
 		append output "\tSkipped\t$_rl_test_stats(skipped)"
 		append output "\tFailed\t$_rl_test_stats(failed)\n"
+		if {[array names _rl_test_stats skipped_by_constraint,*] ne ""} {
+			append output "Skipped by constraint:\n"
+			foreach key [array names _rl_test_stats skipped_by_constraint,*] {
+				regexp {^skipped_by_constraint,(.*)$} $key - constraint
+				append output "\t$constraint\t$_rl_test_stats($key)\n"
+			}
+		}
 		if {$_rl_test_stats(failing_tests) ne ""} {
 			append output "Failing tests:\n\t[join $_rl_test_stats(failing_tests) \n\t]\n"
 		}
@@ -206,6 +262,7 @@ namespace eval ::rltest {
 		global _rl_test_stats
 		if {![info exists _rl_test_stats(name)]} return
 		append _rl_test_stats(results) [format "%s: %s\n" $_rl_test_stats(name) $msg]
+		set msg		;# Return msg so that [rltest debug] and be used to transparently inspect interrim results
 	}
 
 	#>>>
@@ -235,8 +292,9 @@ namespace eval ::rltest {
 		try {
 			foreach {command arglist body} $commands {
 				set fqcommand	[uplevel 1 [list namespace origin $command]]
-				lappend stubbed	[uplevel 1 [list rltest stub_command $command]]
-				proc $fqcommand $arglist $body
+				set key			[uplevel 1 [list rltest stub_command $command]]
+				lappend stubbed	$key
+				proc $fqcommand $arglist [list try $body trap rltest_fallthrough {r o} "tailcall [list $key] {*}\$r"]
 			}
 			uplevel 1 $script
 		} finally {
@@ -287,6 +345,65 @@ namespace eval ::rltest {
 		} finally {
 			oo::define $fqclass mixin -set {*}$old
 			$mixin destroy
+		}
+	}
+
+	#>>>
+
+	proc as_user args { #<<<
+		global g_session g_admin
+		parse_args $args {
+			-nickname	{}
+			-userid		{}
+			-admin		{-# {adminlevel.  Omit to use regusers.admin, pass as "" to force non-admin}}
+			script		{-required}
+		}
+
+		switch [info exists nickname],[info exists userid] {
+			1,1 - 0,0	{error "Must supply either -nickname or -userid"}
+			1,0 {
+				set userid	[db onecolumn "select userid from regusers where nickname=[ns_dbquotevalue $nickname]"]
+				if {$userid eq ""} {
+					error "No such user: \"$nickname\""
+				}
+			}
+			0,1 {
+				set nickname	[db onecolumn "select nickname from regusers where userid=[ns_dbquotevalue $userid]"]
+				if {$nickname eq ""} {
+					error "No such user: \"$userid\""
+				}
+			}
+		}
+
+		if {![info exists admin]} {
+			set admin	[db onecolumn "select admin from regusers where userid=[ns_dbquotevalue $userid]"]
+		}
+
+		set saved_session	[array get g_session]
+		if {[info exists g_admin]} {
+			set saved_admin		[array get g_admin]
+		}
+		try {
+			array unset g_session
+			array unset g_admin
+			set g_session(nickname)	$nickname
+			set g_session(userid)	$userid
+			rl_session signin
+			if {$admin ne ""} {
+				set g_admin(ip)			[rl_getconnip]
+				set g_admin(nickname)	$nickname
+				set g_admin(userid)		$userid
+				set g_admin(timeout)	[expr {[ns_time] + [nsv_get rlshare rlsession_admintimeout]}]
+				set g_admin(level)		[expr {$admin + 0}]
+			}
+			uplevel 1 $script
+		} finally {
+			array unset g_session
+			unset -nocomplain g_admin
+			array set g_session $saved_session
+			if {[info exists saved_admin]} {
+				array set g_admin $saved_admin
+			}
 		}
 	}
 
@@ -438,9 +555,9 @@ namespace eval ::rltest {
 				}
 			}
 
-			string    { if {[json get $j1] ne [json get $j2]} {apply $mismatch "Strings differ: left: \"[json get $j1]\" vs. right: \"[json get $j2]\""} }
-			number    { if {[json get $j1] != [json get $j2]} {apply $mismatch "Numbers differ: left: [json extract $j1] vs. right: [json extract $j2]"} }
-			boolean   { if {[json get $j1]?1:0 != [json get $j2]?1:0} {apply $mismatch "Booleans differ: left: [json extract $j1] vs. right: [json extract $j2]"} }
+			string    { if {$j1_val ne $j2_val} {apply $mismatch "Strings differ: left: \"[json get $j1]\" vs. right: \"[json get $j2]\""} }
+			number    { if {$j1_val != $j2_val} {apply $mismatch "Numbers differ: left: [json extract $j1] vs. right: [json extract $j2]"} }
+			boolean   { if {($j1_val?1:0) != ($j2_val?1:0)} {apply $mismatch "Booleans differ: left: [json extract $j1] vs. right: [json extract $j2]"} }
 			null      { }
 
 			default {
