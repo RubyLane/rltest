@@ -434,7 +434,7 @@ namespace eval ::rltest {
 				set idx	-1
 				json foreach e1 $j1 e2 $j2 {
 					incr idx
-					_compare_json $opts $e1 $e2 $idx
+					_compare_json $opts $e1 $e2 [list {*}$path $idx]
 				}
 			}
 
