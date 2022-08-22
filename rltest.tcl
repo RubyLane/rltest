@@ -350,61 +350,8 @@ namespace eval ::rltest {
 
 	#>>>
 
-	proc as_user args { #<<<
-		global g_session g_admin
-		parse_args $args {
-			-nickname	{}
-			-userid		{}
-			-admin		{-# {adminlevel.  Omit to use regusers.admin, pass as "" to force non-admin}}
-			script		{-required}
-		}
-
-		switch [info exists nickname],[info exists userid] {
-			1,1 - 0,0	{error "Must supply either -nickname or -userid"}
-			1,0 {
-				set userid	[db onecolumn "select userid from regusers where nickname=[ns_dbquotevalue $nickname]"]
-				if {$userid eq ""} {
-					error "No such user: \"$nickname\""
-				}
-			}
-			0,1 {
-				set nickname	[db onecolumn "select nickname from regusers where userid=[ns_dbquotevalue $userid]"]
-				if {$nickname eq ""} {
-					error "No such user: \"$userid\""
-				}
-			}
-		}
-
-		if {![info exists admin]} {
-			set admin	[db onecolumn "select admin from regusers where userid=[ns_dbquotevalue $userid]"]
-		}
-
-		set saved_session	[array get g_session]
-		if {[info exists g_admin]} {
-			set saved_admin		[array get g_admin]
-		}
-		try {
-			array unset g_session
-			array unset g_admin
-			set g_session(nickname)	$nickname
-			set g_session(userid)	$userid
-			rl_session signin
-			if {$admin ne ""} {
-				set g_admin(ip)			[rl_getconnip]
-				set g_admin(nickname)	$nickname
-				set g_admin(userid)		$userid
-				set g_admin(timeout)	[expr {[ns_time] + [nsv_get rlshare rlsession_admintimeout]}]
-				set g_admin(level)		[expr {$admin + 0}]
-			}
-			uplevel 1 $script
-		} finally {
-			array unset g_session
-			unset -nocomplain g_admin
-			array set g_session $saved_session
-			if {[info exists saved_admin]} {
-				array set g_admin $saved_admin
-			}
-		}
+	proc s? {count {suffix s}} { # Conditionally add an "s" if the counted item isn't singular (English...) <<<
+		expr {$count != 1 ? $suffix : ""}
 	}
 
 	#>>>
