@@ -1,4 +1,5 @@
-DESTDIR=/usr/local
+DESTDIR=
+PREFIX=/usr/local
 PACKAGE_NAME=rltest
 VER=1.5
 TCLSH=tclsh
@@ -10,8 +11,8 @@ tm/$(PACKAGE_NAME)-$(VER).tm: rltest.tcl
 	cp rltest.tcl tm/$(PACKAGE_NAME)-$(VER).tm
 
 install-tm: tm/$(PACKAGE_NAME)-$(VER).tm
-	mkdir -p $(DESTDIR)/lib/tcl8/site-tcl
-	cp $< $(DESTDIR)/lib/tcl8/site-tcl/
+	mkdir -p $(DESTDIR)$(PREFIX)/lib/tcl8/site-tcl
+	cp $< $(DESTDIR)$(PREFIX)/lib/tcl8/site-tcl/
 
 install: install-tm
 
